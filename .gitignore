@@ -1,0 +1,15 @@
+# Personal / machine-specific files: never commit these.
+settings.json
+*.tmp
+
+# OwnTone build and install (its database holds Apple TV pairing keys).
+owntone/
+owntone-src/
+
+# Generated per machine by install.sh / the app (contain local paths).
+*.desktop
+owntone.service
+
+# Python
+__pycache__/
+*.pyc
