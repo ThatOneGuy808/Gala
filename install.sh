@@ -175,10 +175,13 @@ APT_PACKAGES=(
 )
 DNF_PACKAGES=(
   gcc make git autoconf automake libtool gettext-devel gawk gperf bison flex pkgconf-pkg-config
-  libconfuse-devel libunistring-devel sqlite-devel
+  # Libraries by pkg-config name, so dnf picks whichever package provides them on
+  # this release (Fedora 45 replaced protobuf-c with protobuf3-c, for example).
+  "pkgconfig(libconfuse)" libunistring-devel "pkgconfig(sqlite3)"
   "pkgconfig(libavcodec)" "pkgconfig(libavformat)" "pkgconfig(libavfilter)" "pkgconfig(libswscale)" "pkgconfig(libavutil)"
-  alsa-lib-devel libxml2-devel libgcrypt-devel avahi-devel "pkgconfig(zlib)" libevent-devel
-  libplist-devel libsodium-devel json-c-devel libwebsockets-devel libcurl-devel protobuf-c-devel gnutls-devel
+  "pkgconfig(alsa)" "pkgconfig(libxml-2.0)" "pkgconfig(libgcrypt)" "pkgconfig(avahi-client)" "pkgconfig(zlib)"
+  "pkgconfig(libevent)" "pkgconfig(libplist-2.0)" "pkgconfig(libsodium)" "pkgconfig(json-c)"
+  "pkgconfig(libwebsockets)" "pkgconfig(libcurl)" "pkgconfig(libprotobuf-c)" "pkgconfig(gnutls)"
   python3 python3-gobject gtk3 libayatana-appindicator-gtk3 pulseaudio-utils avahi
 )
 ZYPPER_PACKAGES=(
