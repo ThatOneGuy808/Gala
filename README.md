@@ -6,6 +6,8 @@
 
 Gala is an app for Linux that allows you to stream your computer's audio over AirPlay to any AirPlay 1 & 2 device on your network! It has a simple, easy to use GUI, and will work with Apple TVs, HomePods, Macs, and more!
 
+<img width="648" height="813" alt="image" src="https://github.com/user-attachments/assets/448f655a-beba-4911-a796-cbba53fc0030" />
+
 ## Features
 - Works with any AirPlay 1 & 2 device (Apple TV, HomePod, Mac, etc.)
 - Multiple speaker support
