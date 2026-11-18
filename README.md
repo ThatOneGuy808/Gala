@@ -34,7 +34,7 @@ Gala is an app for Linux that allows you to stream your computer's audio over Ai
 | BSD              | ❌ Not supported (planned)                        |
 | Windows          | ❌ Not supported (planned)         |
 
-## Install
+## Install on Linux
 
 ```bash
 git clone https://github.com/ThatOneGuy808/gala.git
@@ -47,6 +47,20 @@ cd gala
 ```bash
 cd gala
 ./uninstall.sh
+```
+## Install on FreeBSD
+
+```bash
+git clone https://github.com/ThatOneGuy808/gala.git
+cd gala
+sh install-bsd.sh
+```
+
+## Uninstall
+
+```bash
+cd gala
+sh uninstall-bsd.sh
 ```
 
 ## How to Use
