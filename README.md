@@ -31,7 +31,7 @@ Gala is an app for Linux that allows you to stream your computer's audio over Ai
 | Fedora           | ✅ Supported (Still being tested)  | 
 | Arch             | ⚠️ Untested                        |
 | openSUSE         | ⚠️ Untested                        |
-| BSD              | ❌ Not supported (planned)                        |
+| BSD              | ⚠️ Untested                        |
 | Windows          | ❌ Not supported (planned)         |
 
 ## Install on Linux
