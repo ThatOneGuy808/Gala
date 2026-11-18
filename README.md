@@ -1,28 +1,25 @@
 # Gala - AirPlay On Linux
 
-Send your Linux computer's audio to AirPlay speakers: HomePods, Apple TVs,
-AirPlay-enabled receivers and Macs, one at a time or several in sync.
+**THIS PROJECT WAS MADE WITH THE HELP OF AI**. I do not know anything about coding, this project was made for fun. I am sharing it here though because I still think it may be useful to some. But please be aware that this project was coded with AI. Project details are below
+** **
 
-Gala is a small app that lives in your system tray. Pick a speaker and
-everything you play on your computer comes out of it.
+
+Gala is an app for Linux that allows you to stream your computer's audio over AirPlay to any AirPlay 1 & 2 device on your network! It has a simple, easy to use GUI, and will work with Apple TVs, HomePods, Macs, and more!
 
 ## Features
+- Works with any AirPlay 1 & 2 device (Apple TV, HomePod, Mac, etc.)
+- Multiple speaker support
+- Favorite or hide devices
+- Independent volume control
+- Launch on start
+- Tray icon
+- Media controls from Apple TV (experimental and is a little janky)
 
-- **Any AirPlay 2 device**, including HomePods and Apple TVs (through
-  [OwnTone](https://github.com/owntone/owntone-server), which the installer
-  builds for you)
-- **Stereo pairs** detected automatically and shown as one speaker
-- **Multiple speakers** at once, kept in sync
-- **Volume sliders** per speaker, kept in step with Siri and the Home app
-- **Now playing** on the Apple TV / Home app: title, artist, album and cover
-  art from Spotify or any MPRIS media player
-- **Remote control**: play, pause, next and previous from an Apple TV remote
-  or HomePod control your media player
-- **Apple TV pairing**: type the 4-digit code shown on the TV into the app
-- **System tray** icon, start at login, close/minimize to tray
-- **Favorites and hidden devices**, with offline devices marked
-- **Remembers** your last speaker and reconnects to it
-- **Update OwnTone** from the app's menu
+## OS Support
+
+**This has only been tested on Ubuntu (Kubuntu), so it may not work on all systems.**
+
+**Other distros are work in progress.**
 
 ## Install
 
@@ -32,47 +29,32 @@ cd gala
 ./install.sh
 ```
 
-That's it. The script:
+## Uninstall
 
-1. installs the system packages it needs (asks for your password once),
-2. builds OwnTone and runs it as a background service for your user,
-3. installs Gala with an app menu entry and starts it.
+```bash
+cd gala
+./uninstall.sh
+```
 
-Run it as your normal user, **not** with `sudo`. Building OwnTone takes a few
-minutes.
+## How to Use
 
-**Requirements:** Linux with PipeWire (or PulseAudio) and systemd. The installer
-supports apt (Debian, Ubuntu, Mint…), dnf (Fedora) and pacman (Arch). Tested on
-Ubuntu 26.04 with KDE Plasma on Wayland; other distributions and desktops
-should work but are less tested.
-
-## Using it
-
-1. Open **Gala** from your app menu.
+1. Open up **Gala** from the application launcher
 2. Click **Start AirPlay Discovery**. Your AirPlay devices appear in the list.
-3. Click a speaker. Your computer's audio now plays there. Click your
-   computer's own output to switch back.
+3. Click on the device you want to use. You can also play from multiple speakers
+   with the toggle at top right
+4. Favorite or hide a device by rick clicking on a device. Favorites will stick to the top
+   and hidden ones will go to a menu at the very top right
 
-Turn on **Multiple speakers** to tick several speakers at once. Right-click a
-device to favorite or hide it. The ☰ menu has the rest of the options.
+### Some settings to change
 
-### HomePods and Apple TVs
-
-- In the Home app, set **Home Settings → Speakers & TV → Allow Speaker & TV
-  Access** to **Everyone** or **Anyone on the Same Network**, with no password.
-  With "Only People Sharing This Home", the devices refuse the connection.
-- The first time you play to an Apple TV, it may show a 4-digit code. Type it
-  into the box that appears in Gala and press **Pair**. This is needed only
-  once per Apple TV.
-- For Macs: **System Settings → General → AirDrop & Handoff → AirPlay Receiver
+- In the Home app on your iPhone, iPad, or Mac, go to your Home Settings,
+  or device settings, and enable **Allow Speaker & TV Access** to **Everyone**
+  - For Macs: **System Settings → General → AirDrop & Handoff → AirPlay Receiver
   → Allow AirPlay for: Everyone on the same network**.
+  or **Anyone on the Same Network**. Make sure password is off
+- The first time you connect to an Apple TV, it may prompt you with a 4-digit code. Type the code
+  into the box that appears in Gala at the bottom of the window and press **Pair** or enter.
 
-### Good to know
-
-- AirPlay 2 buffers about 2 seconds, so audio lags slightly behind video.
-- A pause from an AirPlay remote takes about 3 seconds to reach the media
-  player.
-- On Wayland, only Gala's own minimize button can minimize to the tray.
 
 ## Troubleshooting
 
@@ -83,27 +65,8 @@ device to favorite or hide it. The ☰ menu has the rest of the options.
   `systemctl --user status owntone`. Its log is at
   `~/.local/opt/owntone/var/log/owntone.log`.
 - **A device is listed but silent**: look for `403 Forbidden` or pairing
-  messages in the OwnTone log, and check the Home app access setting above.
-
-## Uninstall
-
-```bash
-./uninstall.sh
-```
-
-This removes Gala, OwnTone (including its database and Apple TV pairings) and
-the settings. It then lists the system packages that `install.sh` installed and
-that nothing else on your system needs, and asks before removing them.
-Packages that were already installed before Gala, or that other software uses,
-are kept. Add `DRY_RUN=1` to see what would be removed without changing
-anything.
-
-## How it works
-
-Gala adds a PipeWire output that writes your computer's audio into a pipe.
-OwnTone reads the pipe and streams it over AirPlay 2 to the speakers Gala
-selects through OwnTone's local web API. Song information is read from your
-media player over MPRIS and passed to OwnTone through a second pipe.
+  messages in the OwnTone log
+- **Unable to connect to a devce**: Check Home/Mac settings (see above)
 
 Installed files:
 
@@ -114,11 +77,14 @@ Installed files:
 | OwnTone service | `~/.config/systemd/user/owntone.service` |
 | Menu and login entries | `~/.local/share/applications/`, `~/.config/autostart/` |
 
-## Credits
+## Disclaimer and Credits
 
-Audio streaming is done by [OwnTone](https://github.com/owntone/owntone-server),
-which `install.sh` downloads and builds from source. It isn't included in this
-repository.
+**THIS PROJECT WAS MADE WITH THE HELP OF AI**. I do not know anything about coding, 
+this project was made for fun. I am sharing it here though because I still think it may 
+be useful to some. But please be aware that this project was coded with AI
 
-AirPlay, HomePod and Apple TV are trademarks of Apple Inc. This project isn't
+This project is heavily based on [OwnTone](https://github.com/owntone/owntone-server). 
+A lot of the code is taken and or modified to work with this project.
+
+Mac, AirPlay, HomePod and Apple TV are trademarks of Apple Inc. This project isn't
 affiliated with or endorsed by Apple.
