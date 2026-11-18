@@ -290,6 +290,59 @@ def stop_airplay():
     owntone("PUT", "/outputs/set", {"outputs": []})
 
 
+OWNTONE_PIDFILE = os.path.join(OWNTONE_DIR, "var/owntone.pid")
+
+
+def owntone_uses_systemd():
+    """True if OwnTone is set up as a systemd user service (install.sh does that
+    where systemd is available); otherwise Gala starts/stops it itself."""
+    try:
+        return subprocess.run(
+            ["systemctl", "--user", "cat", "owntone.service"],
+            capture_output=True, timeout=5,
+        ).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def start_owntone():
+    if owntone_uses_systemd():
+        subprocess.run(["systemctl", "--user", "start", "owntone"])
+    else:
+        # Runs in the background by itself and records its PID.
+        subprocess.run([
+            os.path.join(OWNTONE_DIR, "sbin/owntone"),
+            "-c", os.path.join(OWNTONE_DIR, "etc/owntone.conf"), "-P", OWNTONE_PIDFILE,
+        ])
+
+
+def ensure_owntone_running():
+    """Start OwnTone if it isn't answering (e.g. on systems without systemd)."""
+    if owntone("GET", "/config")[0]:
+        return
+    start_owntone()
+    for _ in range(20):
+        time.sleep(0.25)
+        if owntone("GET", "/config")[0]:
+            return
+
+
+def tray_available():
+    """Whether the desktop shows tray icons (StatusNotifier). Plain GNOME doesn't
+    without the AppIndicator extension; then Gala works without a tray icon."""
+    if AppIndicator is None:
+        return False
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+        return bus.call_sync(
+            "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+            "NameHasOwner", GLib.Variant("(s)", ("org.kde.StatusNotifierWatcher",)),
+            GLib.VariantType("(b)"), 0, 2000, None,
+        ).unpack()[0]
+    except GLib.Error:
+        return False
+
+
 def player_state():
     ok, data = owntone("GET", "/player")
     return data.get("state") if ok and data else None
@@ -335,9 +388,16 @@ autoreconf -fi
   --localstatedir="{OWNTONE_DIR}/var" --disable-spotify \\
   --disable-install_systemd --disable-install-user
 make -j"$(nproc)"
-systemctl --user stop owntone
-make install
-systemctl --user start owntone
+if systemctl --user cat owntone.service >/dev/null 2>&1; then
+  systemctl --user stop owntone
+  make install
+  systemctl --user start owntone
+else
+  [ -f "{OWNTONE_DIR}/var/owntone.pid" ] && kill "$(cat "{OWNTONE_DIR}/var/owntone.pid")" 2>/dev/null || true
+  sleep 1
+  make install
+  "{OWNTONE_DIR}/sbin/owntone" -c "{OWNTONE_DIR}/etc/owntone.conf" -P "{OWNTONE_DIR}/var/owntone.pid"
+fi
 echo "UPDATED $(git rev-parse --short HEAD)"
 """
 
@@ -358,7 +418,7 @@ def update_owntone():
     last = out[-1] if out else ""
     if result.returncode != 0:
         # Make sure OwnTone is running again even if the build broke.
-        subprocess.run(["systemctl", "--user", "start", "owntone"])
+        start_owntone()
         return False, f"Update failed. Details in {log_path}"
     if last == "UP_TO_DATE":
         return True, "OwnTone is already up to date."
@@ -647,6 +707,7 @@ class AirPlayWindow(Gtk.Window):
         self.set_icon_name(ICON)
 
         self.settings = load_settings()
+        ensure_owntone_running()  # needed where there's no systemd service for it
         self._links = AirPlayLinks()
         self._now_playing = NowPlaying()
         self._error = ""            # last error to show instead of the device count
@@ -762,7 +823,7 @@ class AirPlayWindow(Gtk.Window):
         self.message.set_max_width_chars(44)
         box.pack_start(self.message, False, False, 0)
 
-        self.tray = Tray(self) if AppIndicator else None
+        self.tray = Tray(self) if tray_available() else None
         # With a tray icon, closing the window keeps the app running there.
         self.connect("delete-event", self.on_close)
 
@@ -790,7 +851,7 @@ class AirPlayWindow(Gtk.Window):
         for label, key in (("Close to tray", "close_to_tray"), ("Minimize to tray", "minimize_to_tray")):
             item = Gtk.CheckMenuItem(label=label)
             item.set_active(self.settings[key])
-            item.set_sensitive(AppIndicator is not None)  # needs tray support
+            item.set_sensitive(tray_available())  # needs a tray to hide to
             item.connect("toggled", self.on_tray_option, key)
             menu.append(item)
         autostart_item = Gtk.CheckMenuItem(label="Start at login")

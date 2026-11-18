@@ -8,6 +8,8 @@
 #
 # Options (environment variables):
 #   DRY_RUN=1   only show what would be removed; change nothing
+#
+# Works with apt, dnf, zypper and pacman, with or without systemd.
 
 set -euo pipefail
 
@@ -39,7 +41,10 @@ dependents() {  # <manager> <package> <our packages...>
   for p in "$@"; do ours["$p"]=1; done
   case "$manager" in
     apt)    apt-get -s remove "$pkg" 2>/dev/null | awk '/^Remv /{print $2}' ;;
-    dnf)    dnf -q repoquery --installed --whatrequires "$pkg" --qf '%{name}\n' 2>/dev/null ;;
+    dnf|zypper)
+            # rpm reports what would break: "… is needed by (installed) NAME-VERSION…"
+            rpm -e --test "$pkg" 2>&1 | sed -n 's/.*is needed by (installed) //p' | sort -u \
+              | while read -r nevra; do rpm -q --qf '%{NAME}\n' "$nevra" 2>/dev/null; done ;;
     pacman) pacman -Qi "$pkg" 2>/dev/null | sed -n 's/^Required By *: *//p' | tr -s ' ' '\n' | grep -vx 'None' ;;
   esac | sed 's/:.*//' | sort -u | while read -r p; do
     if [ -n "$p" ] && [ -z "${ours[$p]:-}" ]; then echo "$p"; fi
@@ -65,7 +70,7 @@ remove_packages() {
   for pkg in "${recorded[@]}"; do
     case "$manager" in
       apt)    dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed" || continue ;;
-      dnf)    rpm -q "$pkg" >/dev/null 2>&1 || continue ;;
+      dnf|zypper) rpm -q "$pkg" >/dev/null 2>&1 || continue ;;
       pacman) pacman -Qq "$pkg" >/dev/null 2>&1 || continue ;;
       *)      echo "Unknown package manager '$manager' in $PACKAGE_RECORD; skipping."; return ;;
     esac
@@ -89,9 +94,11 @@ remove_packages() {
     return
   fi
   case "$manager" in
-    # dnf and pacman -s also remove dependencies nothing else needs.
+    # dnf, zypper --clean-deps and pacman -s also remove dependencies nothing
+    # else needs.
     apt)    run sudo apt-get remove -y "${removable[@]}" ;;
     dnf)    run sudo dnf remove -y "${removable[@]}" ;;
+    zypper) run sudo zypper --non-interactive remove --clean-deps "${removable[@]}" ;;
     pacman) run sudo pacman -Rns --noconfirm "${removable[@]}" ;;
   esac
   if [ "$manager" = apt ]; then
@@ -119,8 +126,22 @@ if command -v pactl >/dev/null; then
   done
 fi
 
-if systemctl --user list-unit-files owntone.service >/dev/null 2>&1; then
+if systemctl --user cat owntone.service >/dev/null 2>&1; then
   run systemctl --user disable --now owntone.service 2>/dev/null || true
+fi
+# Without systemd, Gala started OwnTone itself.
+if [ -f "$OWNTONE_DIR/var/owntone.pid" ]; then
+  run kill "$(cat "$OWNTONE_DIR/var/owntone.pid")" 2>/dev/null || true
+fi
+
+# Firewall ports the installer opened for AirPlay (mDNS is left open, as other
+# software uses it too).
+FIREWALL_RECORD="$APP_DIR/firewall.txt"
+if [ -f "$FIREWALL_RECORD" ] && ask "Close the AirPlay ports (UDP 3690-3691) that install.sh opened in the firewall?"; then
+  case "$(cat "$FIREWALL_RECORD")" in
+    firewalld) run sudo firewall-cmd --permanent --remove-port=3690-3691/udp && run sudo firewall-cmd --reload || true ;;
+    ufw)       run sudo ufw delete allow 3690:3691/udp || true ;;
+  esac
 fi
 run rm -f "$HOME/.config/systemd/user/owntone.service"
 run systemctl --user daemon-reload 2>/dev/null || true
