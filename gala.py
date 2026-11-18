@@ -99,7 +99,7 @@ def set_autostart(enabled):
                 "Type=Application\n"
                 "Name=Gala\n"
                 "Comment=Send this computer's audio to AirPlay speakers\n"
-                f'Exec=/usr/bin/python3 "{SCRIPT}" --hidden\n'
+                f'Exec={sys.executable} "{SCRIPT}" --hidden\n'
                 f"Icon={ICON_FILE}\n"
                 "Terminal=false\n"
                 f"StartupWMClass={APP_ID}\n"
@@ -375,8 +375,15 @@ def keep_spare_queue_item():
         owntone("POST", "/queue/items/add?uris=" + urllib.parse.quote(current["uri"]))
 
 
+# Plain POSIX sh, so it also runs on FreeBSD (no bash, GNU make is "gmake",
+# libraries live in /usr/local).
 UPDATE_SCRIPT = f"""
 set -e
+MAKE=make; command -v gmake >/dev/null && MAKE=gmake
+JOBS=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
+if [ "$(uname)" = FreeBSD ]; then
+  export CFLAGS="-I/usr/local/include" LDFLAGS="-L/usr/local/lib"
+fi
 cd "{OWNTONE_SRC}"
 git fetch -q origin
 before=$(git rev-parse HEAD)
@@ -387,15 +394,15 @@ autoreconf -fi
 ./configure --prefix="{OWNTONE_DIR}" --sysconfdir="{OWNTONE_DIR}/etc" \\
   --localstatedir="{OWNTONE_DIR}/var" --disable-spotify \\
   --disable-install_systemd --disable-install-user
-make -j"$(nproc)"
+$MAKE -j"$JOBS"
 if systemctl --user cat owntone.service >/dev/null 2>&1; then
   systemctl --user stop owntone
-  make install
+  $MAKE install
   systemctl --user start owntone
 else
   [ -f "{OWNTONE_DIR}/var/owntone.pid" ] && kill "$(cat "{OWNTONE_DIR}/var/owntone.pid")" 2>/dev/null || true
   sleep 1
-  make install
+  $MAKE install
   "{OWNTONE_DIR}/sbin/owntone" -c "{OWNTONE_DIR}/etc/owntone.conf" -P "{OWNTONE_DIR}/var/owntone.pid"
 fi
 echo "UPDATED $(git rev-parse --short HEAD)"
@@ -409,7 +416,7 @@ def update_owntone():
     try:
         with open(log_path, "w") as log:
             result = subprocess.run(
-                ["bash", "-c", UPDATE_SCRIPT], stdout=subprocess.PIPE,
+                ["sh", "-c", UPDATE_SCRIPT], stdout=subprocess.PIPE,
                 stderr=log, text=True, timeout=1800,
             )
     except (OSError, subprocess.TimeoutExpired) as exc:
