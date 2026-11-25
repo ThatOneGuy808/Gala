@@ -457,18 +457,38 @@ class AirPlayLinks:
                 txt[key] = value
         self.info[name] = txt
 
+    # Third-party device types, recognised from the model, manufacturer and name
+    # a device announces. Checked in order; anything else non-Apple is a speaker.
+    SOFTWARE_RECEIVERS = re.compile(r"shairport|uxplay|airserver|reflector|rpiplay", re.I)
+    RECEIVER = re.compile(
+        r"\bAVR\b|AVR-|AVC-|receiver|\bRX-[AV]\d|\bTX-(NR|RZ|SR)\d|\bVSX-|\bSC-LX|"
+        r"\b(SR|NR)\d{4}\b|\bCinema \d+\b|\bSTR-(DN|DH|AN|AZ)", re.I)
+    TV = re.compile(
+        r"\bTV\b|BRAVIA|webOS|\b(Samsung|LG Electronics|Vizio|TCL|Hisense|Roku|Toshiba|Sharp)\b|"
+        r"^(KD|KJ|XR|K)-\d|^(QN|UN|QE|GQ|UE)\d{2}|^(OLED|NANO)\d{2}", re.I)
+
     def device_type(self, name):
-        """What kind of AirPlay device this is, from the model it announces."""
-        model = self.info.get(name, {}).get("model", "")
+        """What kind of AirPlay device this is, from what it announces."""
+        t = self.info.get(name, {})
+        model = t.get("model", "")
         if model.startswith("AppleTV"):
             return "Apple TV"
         if model.startswith("AudioAccessory"):
             return "HomePod"
         if model.startswith(("Mac", "iMac")):
             return "Mac"
-        if "AVR" in model or "receiver" in model.lower():
+        if model.startswith("AirPort"):
+            return "AirPort Express"
+        if not t:
+            return "AirPlay"  # nothing announced (yet)
+        about = " ".join(filter(None, (model, t.get("manufacturer", ""), name)))
+        if self.SOFTWARE_RECEIVERS.search(about):
+            return "AirPlay"  # an AirPlay receiver app on a computer
+        if self.RECEIVER.search(model) or self.RECEIVER.search(t.get("manufacturer", "")):
             return "Receiver"
-        return "AirPlay"
+        if self.TV.search(model) or self.TV.search(t.get("manufacturer", "")) or re.search(r"\bTV\b|BRAVIA", name, re.I):
+            return "TV"
+        return "Speaker"
 
     def tv_speakers(self, outputs):
         """Apple TVs that use HomePods as their speakers: {Apple TV name: [HomePod
