@@ -400,6 +400,12 @@ def update_owntone():
     return True, f"OwnTone updated ({last.split()[-1]})."
 
 
+def is_airplay_key(key):
+    """AirPlay entries are keyed by OwnTone output ids (digits, comma-separated);
+    this computer's outputs by their PipeWire/PulseAudio sink name."""
+    return all(part.isdigit() for part in key.split(","))
+
+
 # --- Linked speakers (stereo pairs) ------------------------------------------
 
 class AirPlayLinks:
@@ -451,6 +457,19 @@ class AirPlayLinks:
                 txt[key] = value
         self.info[name] = txt
 
+    def device_type(self, name):
+        """What kind of AirPlay device this is, from the model it announces."""
+        model = self.info.get(name, {}).get("model", "")
+        if model.startswith("AppleTV"):
+            return "Apple TV"
+        if model.startswith("AudioAccessory"):
+            return "HomePod"
+        if model.startswith(("Mac", "iMac")):
+            return "Mac"
+        if "AVR" in model or "receiver" in model.lower():
+            return "Receiver"
+        return "AirPlay"
+
     def tv_speakers(self, outputs):
         """Apple TVs that use HomePods as their speakers: {Apple TV name: [HomePod
         outputs]}. The HomePods announce the Apple TV's group as their parent
@@ -486,7 +505,8 @@ class AirPlayLinks:
                 what = "HomePod"
             else:
                 what = "HomePods"
-            entries.append({"key": ",".join(ids), "ids": ids, "title": f"{tv_name} (Apple TV + {what})"})
+            entries.append({"key": ",".join(ids), "ids": ids, "title": f"{tv_name} (Apple TV + {what})",
+                            "type": "Apple TV"})
             taken.update(o["name"] for o in speakers)
             taken.add(tv_name)
 
@@ -509,7 +529,8 @@ class AirPlayLinks:
                 same_group = [n for n, t in self.info.items() if gpn and t.get("gpn") == gpn]
                 title = gpn if gpn and len(same_group) == len(members) else " + ".join(sorted(names))
                 title += " (Stereo Pair)"
-            entries.append({"key": ",".join(ids), "ids": ids, "title": title})
+            entries.append({"key": ",".join(ids), "ids": ids, "title": title,
+                            "type": self.device_type(names[0])})
         entries.sort(key=lambda e: e["title"].lower())
         return entries
 
@@ -709,6 +730,7 @@ class AirPlayWindow(Gtk.Window):
         self._running = False
         self._using_airplay = False
         self._entries = []          # AirPlay entries from the last refresh
+        self._types = {}            # entry key -> device type ("HomePod", "Apple TV"…)
         self._rows_key = None       # what the list shows, to avoid needless rebuilds
         self._volume_key = None     # which entries have volume sliders
         self._volume_touched = 0.0  # when the user last moved a slider
@@ -910,6 +932,7 @@ class AirPlayWindow(Gtk.Window):
 
         outputs = airplay_outputs() if running else []
         self._entries = self._links.group(outputs or [])
+        self._types = {e["key"]: e["type"] for e in self._entries}
         current = default_sink()
         self._using_airplay = current == PIPE_SINK
         selected_ids = {str(o["id"]) for o in outputs or [] if o.get("selected")}
@@ -951,7 +974,7 @@ class AirPlayWindow(Gtk.Window):
         titles = self.settings["favorite_titles"]
         changed = False
         for kind, key, title, _ in rows:
-            label = f"AirPlay: {title}" if kind == "airplay" else title
+            label = self._label(kind, key, title)
             if key in favs and titles.get(key) != label:
                 titles[key] = label
                 changed = True
@@ -960,7 +983,7 @@ class AirPlayWindow(Gtk.Window):
         for key in favs - online - hidden:
             label = titles.get(key)
             # AirPlay favorites only count as offline while discovery is running.
-            if label and (self._running or not label.startswith("AirPlay: ")):
+            if label and (self._running or not is_airplay_key(key)):
                 rows.append(("offline", key, label, ()))
 
         # Favorites at the top (offline ones after the usable ones); otherwise
@@ -989,7 +1012,7 @@ class AirPlayWindow(Gtk.Window):
             f"Audio output: <b>{GLib.markup_escape_text(self._join_titles(titles) or 'None')}</b>"
         )
 
-        key = (tuple(rows), multi, frozenset(favs), frozenset(hidden))
+        key = (tuple(rows), multi, frozenset(favs), frozenset(hidden), tuple(sorted(self._types.items())))
         self.device_list.handler_block(self._list_handler)
         try:
             if key != self._rows_key:
@@ -1035,6 +1058,13 @@ class AirPlayWindow(Gtk.Window):
         titles = [r[2] for r in self._rows_all() if r[1] in chosen]
         self._remember(kind, sorted(chosen), self._join_titles(titles))
 
+    def _label(self, kind, key, title):
+        """How a device is shown in the list and tray: "HomePod: Dining Pod",
+        "Apple TV: …", "Mac: …"; this computer's outputs as they are."""
+        if kind == "airplay":
+            return f"{self._types.get(key, 'AirPlay')}: {title}"
+        return title
+
     def _rows_all(self):
         rows = [("local", name, label, ()) for name, label in local_sinks()]
         rows += [("airplay", e["key"], e["title"], e["ids"]) for e in self._entries]
@@ -1074,7 +1104,7 @@ class AirPlayWindow(Gtk.Window):
             row.check = Gtk.CheckButton()
             row.check_handler = row.check.connect("toggled", self.on_check_toggled)
             hbox.pack_start(row.check, False, False, 0)
-        text = ("★ " if key in favs else "") + (f"AirPlay: {title}" if kind == "airplay" else title)
+        text = ("★ " if key in favs else "") + self._label(kind, key, title)
         label = Gtk.Label(label=text, xalign=0)
         label.set_ellipsize(Pango.EllipsizeMode.END)
         label.set_margin_top(2)
@@ -1102,12 +1132,15 @@ class AirPlayWindow(Gtk.Window):
             for e in in_use:
                 row = Gtk.Box(spacing=8)
                 # Short name for the slider: without "(Stereo Pair)" / "(Apple TV + …)".
-                short = re.sub(r" \((Stereo Pair|Apple TV \+ [^)]*)\)$", "", e["title"])
-                name = Gtk.Label(label=short, xalign=0)
-                name.set_width_chars(14)
-                name.set_max_width_chars(14)
-                name.set_ellipsize(Pango.EllipsizeMode.END)
-                row.pack_start(name, False, False, 0)
+                # Named only when there are several sliders (multiple speakers),
+                # to tell them apart.
+                if len(in_use) > 1:
+                    short = re.sub(r" \((Stereo Pair|Apple TV \+ [^)]*)\)$", "", e["title"])
+                    name = Gtk.Label(label=short, xalign=0)
+                    name.set_width_chars(14)
+                    name.set_max_width_chars(14)
+                    name.set_ellipsize(Pango.EllipsizeMode.END)
+                    row.pack_start(name, False, False, 0)
                 scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
                 scale.set_draw_value(True)
                 scale.set_value_pos(Gtk.PositionType.RIGHT)
@@ -1261,7 +1294,7 @@ class AirPlayWindow(Gtk.Window):
             if title and name == "hidden":
                 titles[key] = title
             elif title and kind != "offline":
-                titles[key] = f"AirPlay: {title}" if kind == "airplay" else title
+                titles[key] = self._label(kind, key, title)
         save_settings(self.settings)
         GLib.idle_add(lambda: (self.refresh(), False)[1])
 
@@ -1453,7 +1486,7 @@ class Tray:
         self.update([], set(), False, False)
 
     def update(self, rows, chosen, multi, running):
-        key = (tuple(rows), frozenset(chosen), multi, running)
+        key = (tuple(rows), frozenset(chosen), multi, running, tuple(sorted(self.window._types.items())))
         if key == self._key:
             return  # rebuilding the menu only when something changed
         self._key = key
@@ -1468,7 +1501,7 @@ class Tray:
                 item.set_sensitive(False)
                 menu.append(item)
                 continue
-            item = Gtk.CheckMenuItem(label=f"AirPlay: {title}" if kind == "airplay" else title)
+            item = Gtk.CheckMenuItem(label=self.window._label(kind, rkey, title))
             item.set_draw_as_radio(not multi or kind == "local")
             item.set_active(rkey in chosen)
             item.connect("activate", self._on_device, kind, rkey, title, ids, multi)
