@@ -478,7 +478,14 @@ class AirPlayLinks:
         taken = set()
         for tv_name, speakers in tv_speakers.items():
             ids = tuple(sorted(str(o["id"]) for o in speakers))
-            entries.append({"key": ",".join(ids), "ids": ids, "title": f"{tv_name} (HomePods)"})
+            tsids = {self.info.get(o["name"], {}).get("tsid") for o in speakers}
+            if len(speakers) == 2 and len(tsids) == 1 and None not in tsids:
+                what = "Stereo Pair"
+            elif len(speakers) == 1:
+                what = "HomePod"
+            else:
+                what = "HomePods"
+            entries.append({"key": ",".join(ids), "ids": ids, "title": f"{tv_name} (Apple TV + {what})"})
             taken.update(o["name"] for o in speakers)
             taken.add(tv_name)
 
