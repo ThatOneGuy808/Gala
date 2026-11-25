@@ -12,6 +12,7 @@ import base64
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -507,7 +508,7 @@ class AirPlayLinks:
                 gpn = self.info.get(names[0], {}).get("gpn")
                 same_group = [n for n, t in self.info.items() if gpn and t.get("gpn") == gpn]
                 title = gpn if gpn and len(same_group) == len(members) else " + ".join(sorted(names))
-                title += " (stereo pair)"
+                title += " (Stereo Pair)"
             entries.append({"key": ",".join(ids), "ids": ids, "title": title})
         entries.sort(key=lambda e: e["title"].lower())
         return entries
@@ -1100,7 +1101,9 @@ class AirPlayWindow(Gtk.Window):
                 self.volume_box.pack_start(title, False, False, 0)
             for e in in_use:
                 row = Gtk.Box(spacing=8)
-                name = Gtk.Label(label=e["title"].replace(" (stereo pair)", ""), xalign=0)
+                # Short name for the slider: without "(Stereo Pair)" / "(Apple TV + …)".
+                short = re.sub(r" \((Stereo Pair|Apple TV \+ [^)]*)\)$", "", e["title"])
+                name = Gtk.Label(label=short, xalign=0)
                 name.set_width_chars(14)
                 name.set_max_width_chars(14)
                 name.set_ellipsize(Pango.EllipsizeMode.END)
