@@ -65,7 +65,6 @@ DEFAULT_SETTINGS = {
     "favorite_titles": {}, # display names of favorites, to list them while offline
     "close_to_tray": True,     # closing the window keeps the app running in the tray
     "minimize_to_tray": False, # minimizing hides the window to the tray
-    "player": None,        # media player last seen playing (for remote play/pause)
 }
 
 
@@ -343,38 +342,6 @@ def tray_available():
         return False
 
 
-def player_state():
-    ok, data = owntone("GET", "/player")
-    return data.get("state") if ok and data else None
-
-
-def player_info():
-    """OwnTone's player: state, current queue item and its progress."""
-    ok, data = owntone("GET", "/player")
-    return data if ok and data else None
-
-
-def keep_spare_queue_item():
-    """Skip buttons on an AirPlay remote move OwnTone to the next item in its
-    queue. Keep exactly one spare copy of this computer's audio queued after the
-    current one, so "next" has somewhere to go (and the app can notice it), and
-    remove copies that were already played."""
-    info = player_info()
-    ok, queue = owntone("GET", "/queue")
-    if not info or not ok or not queue:
-        return
-    items = queue.get("items", [])
-    current = next((i for i in items if i["id"] == info.get("item_id")), None)
-    if not current or current.get("data_kind") != "pipe":
-        return
-    for item in items:
-        if item["position"] < current["position"]:
-            owntone("DELETE", f"/queue/items/{item['id']}")
-    spares = [i for i in items if i["position"] > current["position"]]
-    if not spares:
-        owntone("POST", "/queue/items/add?uris=" + urllib.parse.quote(current["uri"]))
-
-
 # Plain POSIX sh, so it also runs on FreeBSD (no bash, GNU make is "gmake",
 # libraries live in /usr/local).
 UPDATE_SCRIPT = f"""
@@ -548,19 +515,6 @@ def mpris_props(player):
         return None
 
 
-def mpris_command(player, method):
-    """Send Play/Pause/... to a media player."""
-    bus = _session_bus()
-    try:
-        bus.call_sync(
-            player, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player",
-            method, None, None, 0, 2000, None,
-        )
-        return True
-    except (GLib.Error, AttributeError):
-        return False
-
-
 def mpris_now_playing():
     """Song info from whichever media player (Spotify, a browser...) is playing,
     via the standard MPRIS D-Bus interface. Returns a dict or None."""
@@ -574,7 +528,6 @@ def mpris_now_playing():
             continue
         artists = meta.get("xesam:artist") or []
         return {
-            "player": player,
             "title": title,
             "artist": ", ".join(artists) if isinstance(artists, list) else str(artists),
             "album": meta.get("xesam:album") or "",
@@ -617,7 +570,6 @@ class NowPlaying:
     OwnTone, which shows them on the AirPlay devices."""
 
     def __init__(self):
-        self.player = None  # MPRIS name of the player last seen playing
         self._fd = None
         self._last_song = None
         self._last_pos = None  # (position in seconds, time it was read)
@@ -651,9 +603,6 @@ class NowPlaying:
 
     def poll(self):
         song = mpris_now_playing()
-        if song:
-            self.player = song["player"]
-
         if self._fd is None:
             try:
                 # Fails unless OwnTone has the pipe open for reading (it does
@@ -728,9 +677,6 @@ class AirPlayWindow(Gtk.Window):
         self._volume_timers = {}
         self._tray_key = None
         self._last_airplay = None   # (ids, title) of the last AirPlay pick, for pairing
-        self._remote_prev = None    # OwnTone player state at the last remote poll
-        self._pending_reset = None  # (time, item) of a progress reset still being judged
-        self._remote_ignore_until = 0.0
         self._reconnect_tries = 0
         self._updating = False
 
@@ -844,7 +790,6 @@ class AirPlayWindow(Gtk.Window):
         self.refresh()
         GLib.timeout_add_seconds(3, self._poll)
         GLib.timeout_add_seconds(2, self._poll_now_playing)
-        GLib.timeout_add(300, self._poll_remote)
 
     # --- options menu ---
 
@@ -885,117 +830,7 @@ class AirPlayWindow(Gtk.Window):
     def _poll_now_playing(self):
         if self._running:
             self._now_playing.poll()
-            player = self._now_playing.player
-            if player and player != self.settings.get("player"):
-                self.settings["player"] = player
-                save_settings(self.settings)
         return True
-
-    def _remote_player(self):
-        """The media player that remote play/pause should control: the one last
-        seen playing (remembered across restarts), else any paused player."""
-        players = mpris_players()
-        for known in (self._now_playing.player, self.settings.get("player")):
-            if known in players:
-                return known
-        for player in players:
-            props = mpris_props(player) or {}
-            if props.get("PlaybackStatus") == "Paused" and (props.get("Metadata") or {}).get("xesam:title"):
-                return player
-        return None
-
-    def _poll_remote(self):
-        """Keep OwnTone's player and the media player (Spotify...) in step.
-
-        - Play/pause pressed on a HomePod or Apple TV remote reaches OwnTone,
-          which pauses/resumes its own player: pass that on to the media player.
-        - Next on the remote moves OwnTone to the spare queue item (see
-          keep_spare_queue_item): send Next. Previous restarts OwnTone's current
-          item: send Previous (Spotify then restarts the song, or goes back a
-          song if pressed again quickly, like on a phone).
-        - Play pressed in the media player while OwnTone is paused: resume
-          OwnTone too (a paused OwnTone doesn't wake up for new audio by itself).
-
-        Only *changes* count, so nothing loops back: e.g. Spotify pausing makes
-        OwnTone pause a moment later, which changes nothing in Spotify."""
-        if not self._using_airplay:
-            self._remote_prev = None
-            return True
-        info = player_info() or {}
-        state = info.get("state")
-        item = info.get("item_id")
-        progress = info.get("item_progress_ms") or 0
-        player = self._remote_player()
-        props = (mpris_props(player) or {}) if player else {}
-        playing = props.get("PlaybackStatus") == "Playing"
-
-        prev = self._remote_prev
-        quiet = time.monotonic() < self._remote_ignore_until
-        if quiet and prev is not None:
-            # Quiet period (right after a skip or a pause/play we passed on):
-            # OwnTone's brief in-between states are ignored, but the state from
-            # before is kept, so a real change made meanwhile (e.g. play pressed
-            # soon after pause) is still acted on once the period ends.
-            self._remote_prev = (prev[0], playing, item, progress)
-            return True
-        self._remote_prev = (state, playing, item, progress)
-        if prev is None or player is None:
-            return True
-        prev_state, prev_playing, prev_item, prev_progress = prev
-
-        was_playing = prev_state == "play" and prev_playing
-        reset = item == prev_item and prev_progress > 4000 and progress < 2500
-
-        # A pause and a "previous" both reset OwnTone's progress to 0; the
-        # difference is that "previous" goes back to playing within a moment.
-        # So a pause with a reset waits up to 3 s before being treated as one.
-        if self._pending_reset:
-            since, reset_item = self._pending_reset
-            if state == "play" and item == reset_item:
-                self._pending_reset = None
-                mpris_command(player, "Previous")
-                self._resume_owntone(state)
-            elif time.monotonic() - since > 3 or item != reset_item:
-                self._pending_reset = None
-                if state == "pause" and playing:
-                    mpris_command(player, "Pause")
-                    self._remote_ignore_until = time.monotonic() + 3
-            return True
-
-        if was_playing and prev_item and item != prev_item:
-            # Moved to the spare item while playing: the remote's Next. (Only
-            # while playing, so OwnTone changing items for any other reason can
-            # never start Spotify by surprise.)
-            mpris_command(player, "Next")
-            self._resume_owntone(state)
-            GLib.idle_add(lambda: (keep_spare_queue_item(), False)[1])
-        elif was_playing and reset and state == "play":
-            # Restarted without pausing: the remote's Previous.
-            mpris_command(player, "Previous")
-            self._resume_owntone(state)
-        elif was_playing and reset:
-            # Pause or previous? Decide on the next polls (see above).
-            self._pending_reset = (time.monotonic(), item)
-        elif state != prev_state:
-            # The remote (via OwnTone) changed state.
-            if prev_state == "play" and state == "pause" and playing:
-                mpris_command(player, "Pause")
-            elif prev_state != "play" and state == "play" and not playing:
-                mpris_command(player, "Play")
-            # OwnTone's progress can jump back to 0 right after a pause/resume;
-            # don't mistake that for the remote's Previous.
-            self._remote_ignore_until = time.monotonic() + 3
-        elif playing and not prev_playing and state == "pause":
-            # Resumed in the media player itself while OwnTone was paused.
-            owntone("PUT", "/player/play")
-        return True
-
-    def _resume_owntone(self, state):
-        """After a skip: make sure OwnTone keeps playing, and ignore the brief
-        pause it reports while switching (it isn't the user pausing)."""
-        if state != "play":
-            owntone("PUT", "/player/play")
-        self._remote_ignore_until = time.monotonic() + 3
 
     def _schedule_reconnect(self):
         self._reconnect_tries = 10
@@ -1017,7 +852,6 @@ class AirPlayWindow(Gtk.Window):
             return True  # not all found yet: try again
         ids = tuple(i for k in last["keys"] for i in by_key[k]["ids"])
         self._reconnect_tries = 0
-        self._remote_ignore_until = time.monotonic() + 4
         use_airplay(ids, last["title"])
         self.refresh()
         return False
@@ -1045,8 +879,6 @@ class AirPlayWindow(Gtk.Window):
         self.refresh_volumes(outputs or [], selected_ids)
         self.refresh_pairing(outputs or [])
         self.refresh_hidden_menu()
-        if self._using_airplay:
-            keep_spare_queue_item()
 
         # The bottom line is rebuilt from the current state every refresh, so the
         # count never goes stale. Only AirPlay devices are counted, a stereo pair
@@ -1300,7 +1132,6 @@ class AirPlayWindow(Gtk.Window):
         GLib.idle_add(self._switch_multi)
 
     def _switch_single(self, kind, key, title, ids):
-        self._remote_ignore_until = time.monotonic() + 4
         if kind == "airplay":
             self._last_airplay = (ids, title)
             ok, err = use_airplay(ids, title)
@@ -1324,7 +1155,6 @@ class AirPlayWindow(Gtk.Window):
             if local:
                 return self._switch_single("local", local[0][0], local[0][1], ())
             return False
-        self._remote_ignore_until = time.monotonic() + 4
         ids = tuple(i for row in checked for i in row.ids)
         title = self._join_titles([row.title for row in checked])
         self._last_airplay = (ids, title)
