@@ -66,6 +66,7 @@ DEFAULT_SETTINGS = {
     "favorite_titles": {}, # display names of favorites, to list them while offline
     "close_to_tray": True,     # closing the window keeps the app running in the tray
     "minimize_to_tray": False, # minimizing hides the window to the tray
+    "sort": "name",            # device list order: "name" or "type"
 }
 
 
@@ -875,6 +876,17 @@ class AirPlayWindow(Gtk.Window):
 
     def _build_options_menu(self):
         menu = Gtk.Menu()
+        sort_item = Gtk.MenuItem(label="Sort by")
+        sort_menu = Gtk.Menu()
+        group = None
+        for value, label in (("name", "Name"), ("type", "Device type")):
+            item = Gtk.RadioMenuItem.new_with_label_from_widget(group, label)
+            group = item
+            item.set_active(self.settings["sort"] == value)
+            item.connect("toggled", self.on_sort_changed, value)
+            sort_menu.append(item)
+        sort_item.set_submenu(sort_menu)
+        menu.append(sort_item)
         hidden_item = Gtk.MenuItem(label="Hidden devices")
         self.hidden_menu = Gtk.Menu()
         hidden_item.set_submenu(self.hidden_menu)
@@ -1008,7 +1020,16 @@ class AirPlayWindow(Gtk.Window):
 
         # Favorites at the top (offline ones after the usable ones); otherwise
         # this computer's outputs, then AirPlay.
-        rows.sort(key=lambda r: (r[1] not in favs, r[0] == "offline", r[0] != "local", r[2].lower()))
+        by_type = self.settings["sort"] == "type"
+
+        def type_of(row):
+            # Group by device type, generic "AirPlay" devices last.
+            if not by_type or row[0] != "airplay":
+                return (0, "")
+            kind = self._types.get(row[1], "AirPlay")
+            return (kind == "AirPlay", kind.lower())
+
+        rows.sort(key=lambda r: (r[1] not in favs, r[0] == "offline", r[0] != "local", type_of(r), r[2].lower()))
         return rows
 
     def _chosen(self, current, selected_ids):
@@ -1455,6 +1476,12 @@ class AirPlayWindow(Gtk.Window):
         button.set_tooltip_text(tooltip)
         button.connect("clicked", handler)
         return button
+
+    def on_sort_changed(self, item, value):
+        if item.get_active() and self.settings["sort"] != value:
+            self.settings["sort"] = value
+            save_settings(self.settings)
+            self.refresh()
 
     def on_tray_option(self, item, key):
         self.settings[key] = item.get_active()
