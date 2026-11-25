@@ -450,15 +450,45 @@ class AirPlayLinks:
                 txt[key] = value
         self.info[name] = txt
 
+    def tv_speakers(self, outputs):
+        """Apple TVs that use HomePods as their speakers: {Apple TV name: [HomePod
+        outputs]}. The HomePods announce the Apple TV's group as their parent
+        ("pgid"). An iPhone playing to such an Apple TV really plays to its
+        HomePods; audio sent to the Apple TV itself doesn't reach them."""
+        result = {}
+        for tv in outputs:
+            t = self.info.get(tv["name"], {})
+            if not t.get("model", "").startswith("AppleTV") or t.get("igl") != "1" or not t.get("gid"):
+                continue
+            speakers = [
+                o for o in outputs
+                if o is not tv and self.info.get(o["name"], {}).get("pgid") == t["gid"]
+                and self.info.get(o["name"], {}).get("model", "").startswith("AudioAccessory")
+            ]
+            if speakers:
+                result[tv["name"]] = speakers
+        return result
+
     def group(self, outputs):
         """Turn OwnTone outputs into list entries {key, ids, title}, merging
-        stereo pairs into one entry that plays to every speaker in the pair."""
+        stereo pairs into one entry that plays to every speaker in the pair, and
+        making an Apple TV with HomePod speakers play to those HomePods."""
+        entries = []
+        tv_speakers = self.tv_speakers(outputs)
+        taken = set()
+        for tv_name, speakers in tv_speakers.items():
+            ids = tuple(sorted(str(o["id"]) for o in speakers))
+            entries.append({"key": ",".join(ids), "ids": ids, "title": f"{tv_name} (HomePods)"})
+            taken.update(o["name"] for o in speakers)
+            taken.add(tv_name)
+
         by_tsid = {}
         for o in outputs:
+            if o["name"] in taken:
+                continue  # part of an Apple TV entry above
             tsid = self.info.get(o["name"], {}).get("tsid")
             by_tsid.setdefault(tsid or f"single:{o['id']}", []).append(o)
 
-        entries = []
         for members in by_tsid.values():
             ids = tuple(sorted(str(o["id"]) for o in members))
             names = [o["name"] for o in members]
